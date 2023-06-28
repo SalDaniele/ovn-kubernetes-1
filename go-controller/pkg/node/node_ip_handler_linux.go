@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	"github.com/vishvananda/netlink"
@@ -391,19 +393,37 @@ func (c *addressManager) sync() {
 		}
 	}
 
+	klog.Infof("SD DEBUG: sync() called, addr = %v", addrs)
 	currAddresses := sets.New[string]()
-	for _, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		// 	// For DPU mode, here we need to use the DPU host's IP address which is the tenant cluster's
+		// 	// host internal IP address instead.
+		klog.Infof("SD DEBUG: detected DPU MODE")
+		node, err := c.watchFactory.GetNode(c.nodeName)
 		if err != nil {
-			klog.Errorf("Invalid IP address found on host: %s", addr.String())
-			continue
+			klog.Errorf("SD DEBUG: failed to get node")
 		}
-		if !c.isValidNodeIP(ip) {
-			klog.V(5).Infof("Skipping non-useable IP address for host: %s", ip.String())
-			continue
+		nodeAddrStr, err := util.GetNodePrimaryIP(node)
+		if err != nil {
+			klog.Errorf("SD DEBUG: failed to GetNodePrimaryIp")
 		}
-		currAddresses.Insert(ip.String())
+		currAddresses.Insert(nodeAddrStr)
+	} else {
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				klog.Errorf("Invalid IP address found on host: %s", addr.String())
+				continue
+			}
+			if !c.isValidNodeIP(ip) {
+				klog.V(5).Infof("Skipping non-useable IP address for host: %s", ip.String())
+				continue
+			}
+			currAddresses.Insert(ip.String())
+		}
 	}
+
+	klog.Infof("SD DEBUG: valid address post filter = %v", currAddresses)
 
 	addrChanged := c.assignAddresses(currAddresses)
 	c.handleNodePrimaryAddrChange()
